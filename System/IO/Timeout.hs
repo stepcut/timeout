@@ -83,45 +83,6 @@ cancelTimeout thandle =
           tt    = _timeoutTable thandle
 {-# INLINE cancelTimeout #-}
 
-sPutTickle :: TimeoutHandle -> Socket -> L.ByteString -> IO ()
-sPutTickle thandle sock cs =
-    do L.foldrChunks (\c rest -> sendAll sock c >> tickleTimeout thandle >> rest) (return ()) cs
-{-# INLINE sPutTickle #-}
-{-
-hGetContentsN :: Int -> TimeoutHandle -> Handle -> IO L.ByteString
-hGetContentsN k thandle h = lazyRead -- TODO close on exceptions
-  where
-    lazyRead = unsafeInterleaveIO loop
-
-    loop = do
-        c <- S.hGetNonBlocking h k
-        if S.null c
-          then do eof <- hIsEOF h
-                  if eof then hClose h >> cancelTimeout thandle >> return L.Empty
-                         else hWaitForInput h (-1)
-                            >> loop
-
-          --then hClose h >> return Empty
-          else do tickleTimeout thandle
-                  cs <- lazyRead
-                  return (L.Chunk c cs)
-
-hGetContents' :: TimeoutHandle -> Handle -> IO L.ByteString
-hGetContents' thandle h = hGetContentsN L.defaultChunkSize thandle h
--}
-
-sGetContents' :: TimeoutHandle -> Socket -> IO L.ByteString
-sGetContents' thandle sock = sGetContents sock -- hGetContentsN L.defaultChunkSize thandle h
-
-sGetContents :: Socket         -- ^ Connected socket
-            -> IO L.ByteString  -- ^ Data received
-sGetContents sock = loop where
-  loop = unsafeInterleaveIO $ do
-    s <- N.recv sock 65536
-    if S.null s
-      then shutdown sock ShutdownReceive >> return L.Empty
-      else L.Chunk s `liftM` loop
-
 
 unsafeSendFileTickle :: TimeoutHandle -> Handle -> FilePath -> Offset -> ByteCount -> IO ()
 unsafeSendFileTickle thandle outp fp offset count =
