@@ -30,6 +30,8 @@ import           Prelude hiding (catch)
 import           System.IO (Handle, hClose, hIsEOF, hWaitForInput)
 import           System.IO.Unsafe (unsafeInterleaveIO)
 
+debug = const (return ())
+
 data TimeoutHandle = TimeoutHandle
     { _threadHash              :: !Word
     , _threadId                :: !ThreadId
@@ -37,29 +39,29 @@ data TimeoutHandle = TimeoutHandle
     , _getApproximatePOSIXTime :: IO POSIXTime
     }
 
-timeoutThread :: TimeoutHandle -> IO ThreadId
-timeoutThread thandle = do
+timeoutThread :: TimeoutTable -> IO POSIXTime -> IO ThreadId
+timeoutThread timeoutTable getApproximatePOSIXTime = do
     forkIO $ loop `catch` (\(_::SomeException) -> killAll)
 
   where
-    table = _timeoutTable thandle
+    table = timeoutTable
     loop = do
---        debug "timeoutThread: waiting for activity on thread table"
+        debug "timeoutThread: waiting for activity on thread table"
         TT.waitForActivity table
---        debug "timeoutThread: woke up, killing old connections"
+        debug "timeoutThread: woke up, killing old connections"
         killTooOld
         loop
 
 
     killTooOld = do
-        now    <- _getApproximatePOSIXTime thandle
+        now    <- getApproximatePOSIXTime
         TT.killOlderThan (now - tIMEOUT) table
 
     -- timeout = 30 seconds
     tIMEOUT = 30
 
     killAll = do
---        debug "Backend.timeoutThread: shutdown, killing all connections"
+        debug "timeoutThread: shutdown, killing all connections"
         TT.killAll table
 
 
