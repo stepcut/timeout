@@ -1,0 +1,28 @@
+Name:                timeout-test
+Version:             0.0
+Synopsis:            Test code, benchmarks for timeout
+Homepage:            http://github.com/gregorycollins
+License:             BSD3
+Author:              Gregory Collins
+Maintainer:          greg@gregorycollins.net
+Category:            Testing
+Build-type:          Simple
+Cabal-version:       >=1.2
+
+Executable timeout-psq-benchmarks
+  hs-source-dirs:    psq-benchmarks
+  main-is:           Main.hs
+  build-depends:     base              == 4.*,
+                     Chart             == 0.14.*,
+                     colour            == 2.3.*,
+                     criterion         == 0.5.*,
+                     data-accessor     == 0.2.*,
+                     deepseq           == 1.1.*,
+                     PSQueue           >= 1.1 && <1.2,
+                     mtl               == 2.*,
+                     mwc-random        == 0.8.*,
+                     statistics        == 0.8.*,
+                     vector            == 0.7.*,
+                     vector-algorithms == 0.4.*
+
+
