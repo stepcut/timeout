@@ -2,34 +2,29 @@
 {- | 
 -- borrowed from snap-server. Check there periodically for updates.
 -}
-module System.IO.Timeout where
+module System.IO.Timeout 
+    ( TimeoutManager
+    , TimeoutHandle
+    , initialize'
+    , initialize
+    , destroy
+    , register
+    , tickle
+    , cancel
+    , withTimeout
+    ) where
 
-import           Control.Concurrent            (ThreadId, forkIO, killThread, threadDelay, threadWaitWrite)
-import           Control.Exception             (catch, SomeException)
-import           Control.Monad                 (liftM)
-import qualified Data.ByteString.Char8         as B
-import qualified Data.ByteString.Lazy.Char8    as L
-import qualified Data.ByteString.Lazy.Internal as L
-import qualified Data.ByteString               as S
-import qualified Network.Socket.ByteString as N
-import           Data.DList (DList)
-import qualified Data.DList                    as D
+import           Control.Concurrent      (ThreadId, forkIO, killThread, myThreadId)
+import           Control.Exception       (AsyncException(ThreadKilled), SomeException, catch, throw)
+import           Control.Monad           (liftM)
+import           Data.Concurrent.HashMap (hashString)
 import           Data.Word
-import           Data.IORef
-import           Data.List (foldl')
-import qualified Data.PSQueue as PSQ
-import           Data.PSQueue (PSQ)
-import           Data.Time.Clock.POSIX(POSIXTime, getPOSIXTime)
-import qualified System.IO.TimeoutTable as TT
-import           System.IO.TimeoutTable (TimeoutTable)
-import           Network.Socket (Socket, ShutdownCmd(..), shutdown)
-import           Network.Socket.SendFile (Iter(..), ByteCount, Offset, unsafeSendFileIterWith')
-import           Network.Socket.ByteString (sendAll)
-import qualified Network.Socket.ByteString.Lazy as LS (getContents)
-import           Prelude hiding (catch)
-import           System.IO (Handle, hClose, hIsEOF, hWaitForInput)
-import           System.IO.Unsafe (unsafeInterleaveIO)
+import           Data.Time.Clock.POSIX   (POSIXTime, getPOSIXTime)
+import qualified System.IO.TimeoutTable  as TT
+import           System.IO.TimeoutTable  (TimeoutTable)
+import           Prelude                 hiding (catch)
 
+debug :: String -> IO ()
 debug = const (return ())
 
 data TimeoutHandle = TimeoutHandle
@@ -38,6 +33,39 @@ data TimeoutHandle = TimeoutHandle
     , _timeoutTable            :: TimeoutTable
     , _getApproximatePOSIXTime :: IO POSIXTime
     }
+
+data TimeoutManager = TimeoutManager 
+    { _tm_getApproximatePOSIXTime :: IO POSIXTime
+    , _tm_timeoutThread           :: ThreadId
+    , _tm_timeoutTable            :: TimeoutTable
+    }
+
+initialize' :: IO POSIXTime -> IO TimeoutManager
+initialize' getPOSIXTime' =
+    do tt <- TT.new
+       tid <- timeoutThread tt getPOSIXTime'
+       return $ TimeoutManager  { _tm_getApproximatePOSIXTime = getPOSIXTime'
+                                , _tm_timeoutThread = tid
+                                , _tm_timeoutTable = tt
+                                }
+
+initialize :: IO TimeoutManager
+initialize = initialize' getPOSIXTime
+
+destroy :: TimeoutManager -> IO ()
+destroy tm =
+    do killThread (_tm_timeoutThread tm)
+
+register :: TimeoutManager -> Int -> IO TimeoutHandle
+register tm timeout =
+    do tid <- myThreadId 
+       let th = TimeoutHandle { _threadHash              = hashString (show tid)
+                              , _threadId                = tid
+                              , _timeoutTable            = _tm_timeoutTable tm
+                              , _getApproximatePOSIXTime = _tm_getApproximatePOSIXTime tm
+                              }
+       tickle th timeout
+       return $ th
 
 timeoutThread :: TimeoutTable -> IO POSIXTime -> IO ThreadId
 timeoutThread timeoutTable getApproximatePOSIXTime = do
@@ -65,8 +93,8 @@ timeoutThread timeoutTable getApproximatePOSIXTime = do
         TT.killAll table
 
 
-tickleTimeout :: TimeoutHandle -> IO ()
-tickleTimeout thandle = do
+tickle :: TimeoutHandle -> Int -> IO ()
+tickle thandle timeout = do
     now <- _getApproximatePOSIXTime thandle
     TT.insert thash tid now tt
     return ()
@@ -74,35 +102,24 @@ tickleTimeout thandle = do
           thash = _threadHash   thandle
           tid   = _threadId     thandle
           tt    = _timeoutTable thandle
-{-# INLINE tickleTimeout #-}
+{-# INLINE tickle #-}
 
-cancelTimeout :: TimeoutHandle -> IO ()
-cancelTimeout thandle =
+cancel :: TimeoutHandle -> IO ()
+cancel thandle =
     TT.delete thash tid tt
         where
           thash = _threadHash   thandle
           tid   = _threadId     thandle
           tt    = _timeoutTable thandle
-{-# INLINE cancelTimeout #-}
+{-# INLINE cancel #-}
 
-
-unsafeSendFileTickle :: TimeoutHandle -> Handle -> FilePath -> Offset -> ByteCount -> IO ()
-unsafeSendFileTickle thandle outp fp offset count =
-    unsafeSendFileIterWith' (iterTickle thandle) outp fp 65536 offset count
-
-iterTickle :: TimeoutHandle -> IO Iter -> IO ()
-iterTickle thandle = 
-    iterTickle' 
+withTimeout :: TimeoutManager -> Int -> (TimeoutHandle -> IO a) -> IO (Maybe a)
+withTimeout tm timeout action =
+    do th <- register tm timeout
+       a <- (liftM Just (action th)) `catch` isThreadKilled
+       cancel th
+       return a
     where
-      iterTickle' :: (IO Iter -> IO ())
-      iterTickle' iter =
-          do r <- iter
-             tickleTimeout thandle
-             case r of
-               (Done _) ->
-                      return ()
-               (WouldBlock _ fd cont) ->
-                   do threadWaitWrite fd
-                      iterTickle' cont
-               (Sent _ cont) ->
-                   do iterTickle' cont
+      isThreadKilled :: AsyncException -> IO (Maybe a)
+      isThreadKilled ThreadKilled = return Nothing
+      isThreadKilled e            = throw e

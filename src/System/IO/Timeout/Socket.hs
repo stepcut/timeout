@@ -11,7 +11,7 @@ import           System.IO.Unsafe (unsafeInterleaveIO)
 
 sendAll :: TimeoutHandle -> Socket -> L.ByteString -> IO ()
 sendAll thandle sock cs =
-    do L.foldrChunks (\c rest -> N.sendAll sock c >> tickleTimeout thandle >> rest) (return ()) cs
+    do L.foldrChunks (\c rest -> N.sendAll sock c >> tickle thandle 30 >> rest) (return ()) cs
 {-# INLINE sendAll #-}
 
 getContents :: TimeoutHandle 
@@ -20,7 +20,7 @@ getContents :: TimeoutHandle
 getContents thandle sock = loop where
   loop = unsafeInterleaveIO $ do
     s <- N.recv sock 65536
-    tickleTimeout thandle
+    tickle thandle 30
     if S.null s
       then shutdown sock ShutdownReceive >> return L.Empty
       else L.Chunk s `liftM` loop
